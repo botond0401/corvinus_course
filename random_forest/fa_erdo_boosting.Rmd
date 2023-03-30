@@ -1,0 +1,89 @@
+---
+title: "Fák, erdők, boosting"
+output: html_document
+---
+library(reticulate)
+py_discover_config()
+Könyvtárak és adatfájl:
+```{python}
+ import pandas as pd
+ import numpy as np
+ import matplotlib.pyplot as plt
+ import seaborn as sb
+ import sklearn as sk
+ from sklearn import preprocessing as pp
+ from sklearn import tree
+ from sklearn import linear_model as lm
+ from sklearn.ensemble import RandomForestRegressor as rf, RandomForestClassifier as rc, AdaBoostClassifier as ab
+  from sklearn.ensemble import GradientBoostingRegressor as gbr
+ from sklearn.model_selection import cross_validate as cv
+ from sklearn.model_selection import GridSearchCV as gs
+ 
+ #Adatfájlok beolvasása:
+ bank=pd.read_csv("bankloan.csv")
+ emp=pd.read_csv("employee.csv")
+```
+
+Előkészítés:
+```{python}
+ bank=pd.get_dummies(bank, drop_first=True)
+ Xb=bank.drop(columns=['default_Yes'])
+ yb=bank['default_Yes']
+ emp=pd.get_dummies(emp, drop_first=True)
+ Xe=emp.drop(columns=['salary'])
+ ye=np.log(emp['salary'])
+```
+
+Keresztvalidáció:
+```{python}
+ cross_val = cv(lm.LinearRegression(), Xe, ye, cv = 10, scoring='r2')
+ cross_val['test_score'].mean()
+```
+
+Döntési fa hangolása:
+```{python}
+racs={'max_depth': np.arange(start=1, stop=15, step=1)}
+tunes = gs(tree.DecisionTreeClassifier(), racs, scoring='accuracy', cv=10)
+tunes.fit(Xb, yb)
+result = tunes.cv_results_
+plt.cla()
+sb.lineplot(x='param_max_depth', y='mean_test_score', data=result)
+plt.show()
+result['mean_test_result']
+```
+Az 5 mélységű fa a legjobb, a becsült találati aránya új adatokon 77,3%.
+
+
+Véletlen erdő hangolása:
+```{python}
+racs={'max_features': np.arange(start=1, stop=11, step=1)}
+tunes = gs(rc(n_estimators=500), racs, scoring='accuracy', cv=10)
+tunes.fit(Xb, yb)
+result = tunes.cv_results_
+plt.cla()
+sb.lineplot(x='param_max_depth', y='mean_test_score', data=result)
+plt.show()
+result['mean_test_score']
+```
+
+
+AdaBoosting hangolása:
+```{python}
+racs={'n_estimators': np.arange(start=1, stop=100, step=1)}
+tunes = gs(ab(), racs, scoring='accuracy', cv=10)
+tunes.fit(Xb, yb)
+result = tunes.cv_results_
+plt.cla()
+sb.lineplot(x='param_max_depth', y='mean_test_score', data=result)
+plt.show()
+result['mean_test_score'].max()
+result['mean_test_score'].argmax()
+```
+
+Predikciók a legjobb modellel:
+```{python}
+best = rc(max_features=5).fit(Xb, yb)
+best.predict(Xb)
+```
+
+
