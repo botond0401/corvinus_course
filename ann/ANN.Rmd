@@ -1,0 +1,104 @@
+---
+title: "Python"
+output: html_document
+---
+
+Importálás:
+```{python}
+ import pandas as pd
+ import numpy as np
+ import matplotlib.pyplot as plt
+ import seaborn as sb
+ import sklearn as sk
+ from sklearn import preprocessing as pp
+ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc, RocCurveDisplay
+ from sklearn.model_selection import train_test_split, KFold
+ import keras
+ from keras.models import Sequential
+ from keras.layers import Dense
+ from keras.layers import Dropout
+ from keras.callbacks import EarlyStopping
+ creditcard=pd.read_csv("creditcard.csv")
+ 
+```
+
+Előkészítés:
+```{python}
+ #Hiányzó adatok eltávolítása:
+ creditcard=creditcard.dropna()
+ #Mátrixok:
+ X=creditcard.drop(columns=['Class'])
+ y=creditcard['Class']
+ y=pd.get_dummies(y)
+ y=pd.DataFrame.to_numpy(y)
+ #0 és 1 közé transzformálás:
+ X=pp.MinMaxScaler().fit_transform(X)
+ X, Xtest, y, ytest = train_test_split(X, y, test_size=0.33, random_state=42)
+```
+
+Egyszerű ANN:
+```{python}
+ halo=Sequential()
+ halo.add(Dense(5, input_dim=30, activation='relu'))
+ halo.add(Dense(2, activation='softmax'))
+ halo.summary()
+ halo.compile(loss='binary_crossentropy', optimizer='adam', metrics='accuracy')
+ tanulas=halo.fit(X, y, epochs=30, validation_split=0.2)
+ plt.cla()
+ plt.plot(tanulas.history['accuracy'])
+ plt.plot(tanulas.history['val_accuracy'])
+ plt.show()
+```
+
+Kiértékelés:
+```{python}
+halo_pred = halo.predict(Xtest)
+halo_kat = np.round(halo_pred)
+halo_kat = [row[1] for row in halo_kat]
+ytest = [row[1] for row in ytest]
+cm = confusion_matrix(ytest, halo_kat)
+cm_plot = ConfusionMatrixDisplay(cm, display_labels = ['valid', 'scam'])
+cm_plot.plot()
+plt.show()
+```
+
+Keresztvalidáció:
+```{python}
+cross_val = KFold(n_splits=5, shuffle=True)
+acc = []
+for tanulo, val in cross_val.split(X, y):
+  tanulas=halo.fit(X[tanulo], y[tanulo], epochs=20, validation_split=0.2)
+  scores = halo.evaluate(X[val], y[val], verbose=0)
+  acc.append(scores[1]*100)
+  
+```
+
+
+Dropout és korai megállás:
+```{python}
+megallas = EarlyStopping(patience=3, monitor='val_accuracy')
+tanulas=halo.fit(X, y, epochs=30, validation_split=0.2, callbacks=megallas)
+plt.cla()
+plt.plot(tanulas.history['accuracy'])
+plt.plot(tanulas.history['val_accuracy'])
+plt.show()
+ 
+ # Dropout
+halo=Sequential()
+halo.add(Dense(5, input_dim=30, activation='relu'))
+halo.add(Dropout(rate=0.2))
+halo.add(Dense(2, activation='softmax'))
+halo.summary()
+halo.compile(loss='binary_crossentropy', optimizer='adam', metrics='accuracy')
+tanulas=halo.fit(X, y, epochs=30, validation_split=0.2)
+plt.cla()
+plt.plot(tanulas.history['accuracy'])
+plt.plot(tanulas.history['val_accuracy'])
+plt.show()
+```
+
+Mély ANN:
+```{python}
+# TBA
+```
+
