@@ -1,0 +1,954 @@
+---
+title: "Mintavételen alapuló vizsgálatok"
+author: "Vakhal Péter"
+output: html_notebook
+Date: 2022.02.09.
+---
+
+## Használt package-ek
+```{r packages, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(heplots)
+library(knitr)
+library(Rmisc)
+```
+
+# Mintavételes vizsgálatok
+A gyakorlatban szinte minden statisztikai vizsgálatot mintavétel előz meg, mivel a populáció vizsgálatára nagyon ritkán van alkalmunk. Ráadásul, ha valamilyen oknál fogva mégis lehetőség nyílna az összes egyed megfigyelésére, akkor is úgy kell tekinteni az adatokra, mintha azok *mintavételből* származnnának.
+
+#### Miért?
+Az esetek többségében feltételezzük, hogy a rendelkezésre álló adatbázis később *bővülni fog*, de legalábbis nem zárható ki ennek az esélye. Mivel modelljeinket úgy alkotjuk meg, hogy azok később is alkalmazhatók legyenek, ezért annak egy más összetételű adatbázison is működnie kell.
+
+### Mintavételen alapuló kutatások
+A statisztikai, ökonometriai vizsgálatoknál elemzett adatok forrása háromféle lehet:
+
+* **Kísérlet**: a kutató szándékosan perturbálja (kibillenti egyensúlyából) a mintát. Például egy egérpopulációt vírussal fertőzünk meg, majd elemezzük a betegség hatását az egerek viselkedésére.
+
+<center>
+![Chaetodipus penicillatus](https://upload.wikimedia.org/wikipedia/commons/9/97/Desert_pocket_mouse.jpg)
+</center>
+
+* **Felmérés**: a kutató nem zavarja meg a mintát, az eljárás nem változtatja meg az egyedek egy attribútumának sem az eloszlását. Például egy egérpopulációból véletlenül kiválasztunk 15 egyedet és megmérjük a testtömegüket. Az eljárás nem befolyásolja az egerek méreteit.
+* **Megfigyelés**: csupán tapasztalatból származó következtetések levonása. Például egy erdőőr megfigyeli a szarvasok vonulási irányát, majd a tapasztalatokból következtetést von le. Az ilyen ún. kontrollálatlan vizsgálatok nem számítanak reprezentatívnak.
+
+<center>
+![](https://www.universetoday.com/wp-content/uploads/2008/11/astronomer.jpg)
+</center>
+
+### Lehetséges mintavételi eljárások
+Két típust különböztethetünk meg.
+**Valószínűségen alapuló mintavétel**: a populáció minden egyedének létezik egy $p \ne 0$ mintába kerülési valószínűsége. A valószínűségeken alapuló mintavételi terv magában foglalhatja a populáció *rétegzését*, *klaszterezését* még a kiválasztás előtt. Következésképp, a mintába kerülési valószínűségeknek nem muszáj egyenlőnek lenniük, de az egy rétegen, klaszteren belül a kiválasztás esélye minden egyed esetén azonos.
+
+**Modell alapú**: Ebben az esetben a kutató rendelkezik ún. *apriori* információval a vizsgálandó változók eloszlásáról és kapcsolatáról. Rétegzés és klaszterezés lehetséges. A modellt arra használjuk, hogy létrehozzunk egy *súlyvektort*, amit a mintavételhez használhatunk. Ebben az esetben a később használatos modellek becslését jelentősen javíthatjuk, a mintavétel költségeit csökkenthetjük. A becslések megbízhatósága akkor a legnagyobb, ha az apriori információt hordozó *x* változó *többé-kevésbé* arányos a becsülni kívánt *y* változóval, azaz $x \propto y$.
+
+### A valószínűségi mintavételről bővebben
+A módszer feltételezi, hogy a kutató képes az *S* populációból $S_1, S_2, \dots, S_n \in S$ $S_1 \cap S_2 \cap \dots \cap S_n = \emptyset$ diszjunkt halmazokat képezni. Ez csak akkor lehetséges, ha a populációt egy szeparálható tulajdonsága alapján elemezzük. Például területi, nemi, vallási, egészségügyi stb. alapon. A szeparálhatóság jellemzően akkor nem teljesíthető, ha a megfigyelt egységről nem áll rendelkezésre a szétválasztás alapját képező információ. Tipikusan ilyen például a politikai hovatartozás, amely nem csak azért nem szeparálható, mert jellemzően ilyen adat nem elérhető, hanem azért is, mert sok esetben az egyén nem tudja önmagát sem besorolni.
+
+#### Példa
+
+A *valószínűség alapú* valamint a *modell alapú* módszerek közötti különbség érzékeltetéséhez nézzük az alábbi példát.
+
+```{r warning=FALSE}
+telep<-read.csv(url("https://raw.githubusercontent.com/pvakhal/tsm2/main/inference/hun_settlements.csv"), sep = ";", header = TRUE, encoding = "UTF-9")
+colnames(telep)<-c("Település", "Lakosság")
+```
+
+A fájl az összes magyarországi település lakosságszámát tartalmazza. Tegyük fel, hogy szeretnék megtudni, hogy országosan hány beteg van egy tetszőleges betegség esetén. Szimuláljunk ehhez adatokat! Tegyük fel, hogy a betegség incidencia száma egyenesen arányos a lakosságszámmal, vagyis $y=a+bx$, ahol *y* a betegek száma, *x* a lakosságszám, $0<b \leq 0.1, b \in \mathbb{R}$ véletlen változó, eloszlása $b \sim {\sf N} (\mu,\sigma)$, $a>1, a \in \mathbb{R}$ pedig egy konstans. Miután a legkisebb település lakosságszáma 11 fő (*Iborfia*), ezért célszerű *a*-t ez alatt rögzíteni.
+
+```{r Betegek, echo=TRUE}
+
+# Mindent véletlenszám generátorral végzünk, ezért minden gépen más eredmény születik
+a<-abs(rnorm(1, 0, 5)) # véletlen szám a konstansra
+
+# Generáljunk véletlen betegszámokat lakosságarányosan
+telep$Beteg<-sapply(c(1:nrow(telep)), function(x) round(abs(rnorm(1, 0.05, 0.05))*telep[x,2]+a))
+
+# ábrázoljuk a betegek számát és a lakosságot
+telep %>%
+  ggplot(aes(x=Lakosság, y=Beteg)) + geom_point(alpha=0.4)
+
+```
+
+Most, hogy megvannak a betegek kezdjük el a mintavételt. Tegyük fel, hogy egy kiválasztott településen a *véletlen mintavétel* alkalmazásakor minden egyénnek ugyanakkora a kiválasztási valószínűsége, azaz a településen a kiválasztott egyének ugyanakkora arányban lesznek betegek, mint amekkora a településen a betegek aránya (ez a valóságban nem így van!). Végezzük a mintavételt véletlen kiválasztással és modell alapon a lakosságszám súlyokkal.
+
+```{r mintavétel, echo=TRUE}
+# Valószínűség alapú mintavétel 50 település kiválasztásával
+random_telep<-telep[round(runif(50,1,nrow(telep))),]
+
+# Modell alapú mintavétel 50 település kiválasztásával
+modell_telep<-telep[sample(c(1:nrow(telep)), size=50, prob = telep$Lakosság/sum(telep$Lakosság)),]
+
+# Hasonlítsuk össze a két eredményt az arányokra vonatkozóan
+mean(random_telep$Beteg/random_telep$Lakosság) # valószínűségi arány becslése
+mean(modell_telep$Beteg/modell_telep$Lakosság) # modell alapú arány becslése
+mean(telep$Beteg/telep$Lakosság) # valós arány
+
+mean(random_telep$Beteg/random_telep$Lakosság)*sum(telep$Lakosság) # valószínűség alapú
+mean(modell_telep$Beteg/modell_telep$Lakosság)*sum(telep$Lakosság) # modell alapú
+sum(telep$Beteg) # valós betegszám
+
+# Ismételjük meg a vizsgálatot 1000-szer
+samples<-matrix(nrow = 1000, ncol=2)
+colnames(samples)<-c("random", "modell")
+for (i in 1:1000){
+  random_telep<-telep[round(runif(50,1,nrow(telep))),]
+  modell_telep<-telep[sample(c(1:nrow(telep)), size=50, prob = telep$Lakosság/sum(telep$Lakosság)),]
+  samples[i,1]<-(mean(random_telep$Beteg/random_telep$Lakosság)*sum(telep$Lakosság))/sum(telep$Beteg)
+  samples[i,2]<-(mean(modell_telep$Beteg/modell_telep$Lakosság)*sum(telep$Lakosság))/sum(telep$Beteg)
+}
+
+# ábrázoljuk a két hisztogrammot
+melt(samples) %>%
+  ggplot(aes(x=value, fill=Var2)) + geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity')
+```
+
+Megállapíthatjuk, hogy a modell alapú mintavétel **közelebb van a valósághoz**, ezért a legtöbbször érdemes alkalmazni, ha van *jó minőségű apriori* információnk. Sajnos ez nagyon ritka.
+
+## Véletlen mintavétel
+
+* Egyszerű, véletlen visszatevéses mintavétel (SRSWR)
+* Egyszerű, véletlen visszatevés nélküli mintavétel (SRS)
+
+## Az SRS
+**Visszatevés nélkül** $N \choose n$ számú kombinációt vehetünk, *SRSWR* esetén pedig $N^n$ darab létezik. Függetlenül attól, hogy melyiket alkalmazzuk, a kiváalsztás esélye $1/N$, ahol *N* a populáció egyedszáma. Nézzük meg a mintavétel néhány nevezetes jellemzőjét.
+
+### Torzítatlanság
+**Állítás**: Legyen $\overline{y}$ *minta* várható értéke a populáció $\mu$ átlagának **torzítatlan becslése**. Ha $\overline{y} \neq \mu$, akkor $B(\overline{y})=\overline{y}-\mu$ a torzítás mértéke. Értelemszerűen $B(\overline{y})=0$ torzításra törekszünk.
+
+**Bizonyítás**: Legyen $Y_1, ...Y_n \in Y$ véletlen változó $\mu$ várható értékkel. Ekkor $\overline{Y}=n^{-1} \sum_{i=1}^{n} Y_i$. Vegyünk sok mintát (egy mintavétel nem mintavétel), számoljuk ki a várható értéküket, majd vegyük a várható értékek várható értékét! Azaz $$E(\overline{Y})=n^{-1} \sum_{i=1}^{n} E(Y_i)=n^{-1} *n\mu=\mu$$
+
+#### Példa
+```{r echo=TRUE, warning=FALSE}
+x<-rnorm(1000) # hozzunk létre egy 1000 elemű véletlen vektort standard normális eloszlásból
+samples<-c() # hozzuk létre a tárolóvektort
+
+for (i in 1:1000) { # vegyünk 100 elemű mintákat 1000-szer
+  samples[i]<-sample(x, size=100) %>% mean
+}
+
+# ábrázoljuk a hisztogrammot
+hist(samples)
+abline(v=mean(x), col="blue", lwd=3) # becsült várható érték
+
+# nézzük meg, hogy az átlagok átlaga hogyan viszonyul a főátlaghoz
+mean(x)
+mean(samples)
+```
+
+Láthatjuk, hogy a mintavételek alapján mért várható érték eltér a valós várható értéktől. Tekintsük a következő ábrát:
+
+<center>
+![](https://raw.githubusercontent.com/pvakhal/tsm2/main/inference/bias.png)
+<\center>
+
+A torzítás mértékét a $B=m-\mu$ különbség adja meg. A *mintából* kiszámolható a $\sigma$ szórás, azonban ez a $\mu$-höz tartozó $\sigma_\mu$ szórás és nem a valós *m* várható értékhez tartozó $\sigma_m$ szórás. A becslés jóságát illetően kijelenthetjük, hogy 0,05 a valószínűsége, hogy az *m*-re vonatozó $\mu$ esztimátorunk pontossága 1,96$\sigma$ hibatáron kívül esik (persze 95%, hogy belül). Ezt jelzi a két besatírozott rész közötti terület.
+
+Nézzük meg, hogy ez a torzítás hogyan módosítja a valószószínűségeket! A *Q*-val jelölt terület:
+$$
+\sigma \sqrt{2\pi}^{-1} \int_{\mu+1.96 \sigma}^{\infty} e^{-\frac {1} {2}(\mu-m)^2/\sigma^2}d\mu
+$$
+
+Ismerjük, hogy $\mu-m=B$, így pedig az integrál kezdő pontja átírható: $1.96-(B/\sigma)$-ra. A *P*-vel jelölt terület is erre az analogiára átírható, csupán az integrál végpontját szükséges megváltoztatni: $-1.96-(B/\sigma)$.
+Ebből következik, hogy a valószínűségekben bekövetkezett torzulás kizárólag a becslés torzításának szóráshoz viszonyított aránytúl függ, azaz $B/\sigma$ értéktől. Minél nagyobb ez az arány, annál nagyobb torzítás lép fel.
+
+<center>
+![](https://raw.githubusercontent.com/pvakhal/tsm2/main/inference/bias2.png)
+<\center>
+
+Amennyiben tehát a tozítás a szóráshoz viszonyítva csekély mértékű, például 0.1, akkor az 0.05-ös bizonyossági szintünk valójában 0.0511. Minél nagyobb az arány, annál súlyosabbá válik a torzítás a bizonyossági szintben. Ha például $B=\sigma$, akkor a torízás már 0.17, ami több, mint háromszor nagyobb, mint ahogy feltételeztük!
+Hüvelykujjszabályként elmondható, hogy ha a becslés torzítása kisebb, mint a szórás 10%-a, akkor a bizonyossági szintre gyakorolt hatás elhanyagolható.  
+
+### Hatásosság
+Becslések készítésénél célunk az, hogy a *torzítatlan* becslések közül minél kisebb szórásút találjunk. Ez implikálja a következő definíciót:
+Legyen $T_1$ és $T_2$ minták (statisztikák) a populáció valamilyen $\theta$ paraméterre irányuló becslése. Ekkor $T_1$ **hatásosabb**, mint $T_2$, ha $$D_{\theta}^2 (T_1) \le D_{\theta}^2 (T_2),  \text{ } \forall \theta \in \Theta$$
+
+**Tétel**: $T_1$ és $T_2$ statisztikák akkor és csak akkor *egyaránt torzítatlan, és hatásos** becslések, ha $$P_\theta(T_1=T_2)=1, \text{ } \forall \theta \in \Theta$$
+
+**Bizonyítás** (egyszerűsített): Legyen $T_1$ és $T_2$ statisztikák mellett még $T$ torzítatlan (de nem hatásos) becslés, amelyre igaz, hogy $$D_{\theta}^2(T_1)=D_{\theta}^2(T_2) \le D_{\theta}^2(T), \text{ } \forall \theta \in \Theta$$
+
+Tegyük fel, hogy $T= \frac{T_1+T_2} {2}$, ami azt indukálja, hogy $D_{\theta}^2(T_1) \le D_{\theta}^2(T)$. Figyelembe véve a korábbi feltevésünket: $$D_{\theta}^2(T_1) \le D_{\theta}^2(T)=\frac {1} {4} D_{\theta}^2(T_1+T_2)=\frac {1} {4} (D_{\theta}^2(T_1)+D_{\theta}^2(T_2)+2Cov_\theta (T_1.T_2))$$
+
+Az egyenlőség csak akkor teljesül, ha $Cov_\theta (T_1,T_2)=D_{\theta}^2$, implikálja, hogy $D_{\theta}^2(T_1)=Cov_\theta(T_1,T_1)$.
+
+#### Példa
+```{r echo=TRUE, warning=FALSE}
+x<-rnorm(1000) # hozzunk létre egy 1000 elemű véletlen vektort
+samples<-matrix(nrow = 1000, ncol=2) # hozzuk létre a tárolómátrixot
+colnames(samples)<-c("mean", "variance")
+
+for (i in 1:1000) {
+  temp<-sample(x, size = 100) # minta
+  samples[i,1]<-mean(temp) # várható érték eltárolása
+  samples[i,2]<-var(temp) # variancia eltárolása
+  rm(temp)
+}
+
+# ábra
+plot(samples[,1], samples[,2])
+
+plot((samples[,1]-mean(x))^2, samples[,2])
+```
+
+Láthatjuk, hogy a nagyon kicsi négyzetes hibához is tartozhat magas variancia, értelemszerűen nekünk előnyösebb, ha ugyanakkora hibához alacsonyabb variancia tartozik.
+
+### Konzisztencia
+A konzisztencia kimondja, hogy minta elemszámának növelésével javul a becslés pontossága. Ez egyébként a **nagy számok (gyenge) törvénye**. Legyen egy tetszőleges $X_1,X_2 \dots, X_n \text { } \in X$ számsoron definiált $T$ statisztika $\theta$ momentumra nézve. Ekkor $$\lim_{n \to \infty} P_\theta(|T(X_n)-\theta| \ge \epsilon)=0, \text { } \forall \epsilon>0$$
+
+#### Példa
+```{r echo=TRUE}
+x<-rnorm(1000) # hozzunk létre egy 1000 elemű véletlen vektort
+
+samples<-sapply(seq(10, 1000, 10), function(y) mean(sample(x, size = y))) # vegyünk emelkedő számú mintát 10-től 1000-ig
+
+plot(c(1:100), samples-mean(x)) # ábrázoljuk az eredményeket
+```
+
+## Mintából származó becslések
+### Átlag
+Bármilyen háttéreloszlásból származó $y_1,y_2,\dots y_n \in Y$ SRS vagy SRSWR mintavételből származó $\overline{y}$ várható érték populáció $\mu$ átlagának torzítatlan becslése: $$\mu=N^{-1}\sum_{i=1}^Ny_i$$ $$\overline{y}=n^{-1}\sum_{i=1}^ny_i$$.
+
+### Átlag varianciája
+SRS esetén a populációból nyert $\overline{y}$ várható érték varianciája $\hat{var}(\overline{y})$, ami a populáció átlagához $\mu$ átlagához tartozó $var(\mu)$ variancia torzítatlan becslése: $$var(\mu)=(\frac {N-n} {N}) \frac {\sigma^2} {n}$$ $$\hat{var}(\overline{y})=(\frac {N-n} {N}) \frac {s^2} {n}$$
+
+## Populáció létszámának becslése mintából
+
+Jellemzően mozgó egyedek megfigyelése esetén használatos, ilyenkor a mintavétel – értelemszerűen – visszatevéses. Az egyedek területi eloszlása csak ritkán ismert, a mozgás miatt fontos, hogy a vizsgálatot egy időben végezzük – ez komoly erőforrásokat igényelhet. Lépések:
+
+1. A vizsgálni kívánt területet osszuk *N* darab egyenlő részre
+2. SRS módszerrel válasszunk ki *n* darab **területet** majd számoljuk meg az egyedek (*y*) számát.
+
+A populáció $\tau$ létszámát a következőképpen becsüljük: $$\tau=\sum_{i=1}^Ny_i=N\mu$$ $$\hat{\tau}=N\overline{y}=\frac {N} {n}\sum_{i=1}^Ny_i$$
+
+Az ehhez tartozó varianciák: $$var(\tau)=N^2var(\overline{y})=N(N-n)\frac {\sigma^2} {n}$$ $$\hat{var}(\overline{y})=N^2\hat{var}(\overline{y})=N(N-n)\frac {s^2} {n}$$
+
+<div class="alert alert-info">
+  <strong>Emlékeztető!</strong>
+A megfigyelési területet egységekre bontjuk (*N*), majd megszámoljuk az egységeken található egyedeket (*n*). *N* tehát **nem** a populáció létszáma, hanem a **területi egységek száma**.
+</div>
+
+#### Példa
+![](https://searchengineland.com/figz/wp-content/seloads/2012/04/penguin1.jpg)
+
+Becsüljük meg, hogy egy adott területen hány pingvin él!
+
+```{r echo=TRUE}
+# hozzunk létre egy vektort, ami a pingvinek koordinátáit tartalmazza egy 10x10-es térben
+pingvin<-matrix(nrow = 100, ncol=2)
+colnames(pingvin)<-c("x", "y")
+for (i in 1:2) {
+  pingvin[,i]<-runif(100, min = 1, max = 10)
+}
+
+# ábrázoljuk a "térképet"
+plot(pingvin, pch = 8)
+```
+
+
+```{r echo=TRUE}
+# osszuk fel képzeletben a térképet egy 10x10-es négyzetrácsra (=100 cella), és vegyünk n-et véletlenül
+# csak a cellák bal alsó koordinátáit határozzuk meg véletlenül a többit kiszámoljuk
+# ügyeljünk rá, hogy ne válasszuk kétszer ugyanazt a cellát
+
+n<-10 # cellák száma
+samples<-matrix(nrow = n, ncol = 4)
+colnames(samples)<-c("xleft", "ybottom", "xright", "ytop")
+
+for (i in 1:n) {
+  samples[i,1]<-round(runif(1, min = 1, max = 9)) # xleft
+  samples[i,2]<-round(runif(1, min = 1, max = 9)) # ybottom
+}
+
+# nézzük meg, hogy van-e duplikátum
+# ha igen, töröljük, és tegyünk meg új véletlen adatot
+
+while (length(which(duplicated(samples)=="TRUE"))>0) {
+  samples<-samples[-which(duplicated(samples)=="TRUE"),]
+  for (i in 1:(n-nrow(samples))) {
+    samples<-rbind(samples, c(round(runif(1, min = 1, max = 9)), round(runif(1, min = 1, max = 9)), rep(0, 2)))
+  }
+}
+
+# számoljuk ki a hiányzó adatokat
+# a cella mérete 1x1-es
+for (i in 1:n) {
+  samples[i,3]<-samples[i,1]+1
+  samples[i,4]<-samples[i,2]+1
+}
+
+# ábrázoljuk a kiválasztott négyzeteket
+plot(pingvin, pch = 8)
+for (i in 1:n){
+  rect(samples[i,1], samples[i,2], samples[i,3], samples[i,4], col=rgb(1,0,0,0.2))
+}
+```
+
+```{r echo=TRUE}
+# számoljuk meg, hogy hány pingvin van a kiválasztott cellákban
+samples_pingvin<-c()
+pingvin<-as.data.frame(pingvin)
+
+for (i in 1:n) {
+  samples_pingvin[i]<-nrow(subset(pingvin,
+                                  x>=samples[i,1] &
+                                    x<samples[i,3] &
+                                    y>=samples[i,2] &
+                                    y<samples[i,4]))
+}
+
+# adjunk becslést a pingvin populáció méretére
+sum(samples_pingvin)*(nrow(pingvin)/nrow(samples)) # átlag
+sqrt(nrow(pingvin)^2*var(samples_pingvin)) # szórás
+```
+
+## Arányok a populációban
+Sokszor előfordulhat, hogy nem a populáció létszámára, vagy egy statisztikájára vagyunk kíváncsiak, hanem egy arányra a popluláción belül. Legyen $y_i:\{0,1\} \text { }\forall y_i \in \mathbb{N}$ a populáció egy elemének attribútuma, vagyis $y_i \sim {\sf Binom} (n,p)$. Ekkor a mintából becsült várható értéke: $$\hat{p}=n^{-1} \sum_{i=1}^ny_i= \overline{y}$$
+
+Varianciája pedig: $$\hat{var}(\hat{p})= (\frac {N-n} {N}) \frac {\hat{p}(1-\hat{p})} {n-1}$$
+
+#### Példa
+![](https://cdn.xl.thumbs.canstockphoto.de/brexit-referendum-abbildung-zeichnungen_csp35216096.jpg)
+
+Vizsgáljuk meg, hogy vajon lehetséges lett volna helyesen előre jelezni a Brexit szavazás eredményét?
+
+```{r warning=FALSE}
+# töltsük be az adatbázist
+brexit<-read.csv(url("https://raw.githubusercontent.com/pvakhal/tsm2/main/inference/brexit.csv"), sep=";", dec=",", header=TRUE)
+```
+
+Amennyiben csak a véletlen mintavételt szimulálnánk, akkor valószínűleg a helyes eredményt, vagy ahhoz közelit érnénk el. A helyzet azonban nem ilyen egyszerű, ugyanis a mintavétel során felléphetnek, és a gyakorlatban fel is lépnek torzítások. Fűszerezzük meg a mintavételt úgy, hogy a kiválasztott választókerületben mért eredményeket tekintsük egy *binomiális* eloszlású valószínűségi változónak.
+
+```{r SRS mintavétel, echo=TRUE}
+n<-50 # kiválasztott választókerületek száma
+N<-1000 # kiválasztott mintaméret
+brexit_srs<-brexit[round(runif(n, min = 1, max = 650)),] # vegyünk véletlen mintát
+
+# osszuk el lakosságszámarányosan a mintaméretet
+brexit_srs$sample_size<-ceiling(brexit_srs$population*N/sum(brexit_srs$population))
+
+# szimuláljuk a mért "leave" eredményeket
+brexit_srs$sample_leave<-sapply(c(1:n), function(x) sum(rbinom(n=brexit_srs$sample_size[x], size=1, prob = brexit_srs$leave[x]))/brexit_srs$sample_size[x])
+
+# ábrázoljuk az eredményeket
+brexit_srs_plot<-brexit_srs[,c(1,4,6)]
+brexit_srs_plot$verdict<-"leave"
+brexit_srs_plot$verdict[brexit_srs_plot$leave<0.5]<-"remain"
+brexit_srs_plot %>%
+  ggplot(aes(x=sample_leave, y=leave, color=verdict)) + geom_point() + geom_vline(aes(xintercept=0.5)) + geom_abline(aes(intercept=0, slope=1))
+```
+
+```{r SRS következtetés, echo=TRUE}
+# mintából átlag
+p_srs<-sum((brexit_srs$sample_leave*brexit_srs$population))/sum(brexit_srs$population)
+print(p_srs)
+
+# mintából variancia
+var_srs<-(p_srs-p_srs^2)/(N-1)*(sum(brexit$population-N)/sum(brexit$population))
+
+# mintából szórás
+sqrt(var_srs)
+
+# valós eredmény
+# sajnos arra nem találtam adatokat, hogy a valóságban hányan mentek el szavazni
+# ezért a hivatalos számot használjuk
+print(0.5189)
+```
+
+Végezzük el a modell alapú vizsgálatot, felhasználva a lakosságszámokat súlyként!
+
+```{r modell alapú mintavétel, echo=TRUE}
+n<-50 # kiválasztott választókerületek száma
+N<-1000 # kiválasztott mintaméret
+brexit_model<-brexit[sample(c(1:650), size=n, prob=brexit$population/sum(brexit$population)),] # vegyünk véletlen mintát
+
+# osszuk el lakosságszámarányosan a mintaméretet
+brexit_model$sample_size<-ceiling(brexit_model$population*N/sum(brexit_model$population))
+
+# szimuláljuk a mért "leave" eredményeket
+brexit_model$sample_leave<-sapply(c(1:n), function(x) sum(rbinom(n=brexit_model$sample_size[x], size=1, prob = brexit_model$leave[x]))/brexit_model$sample_size[x])
+
+# ábrázoljuk az eredményeket
+brexit_model_plot<-brexit_model[,c(1,4,6)]
+brexit_model_plot$verdict<-"leave"
+brexit_model_plot$verdict[brexit_model_plot$leave<0.5]<-"remain"
+brexit_model_plot %>%
+  ggplot(aes(x=sample_leave, y=leave, color=verdict)) + geom_point() + geom_vline(aes(xintercept=0.5)) + geom_abline(aes(intercept=0, slope=1))
+```
+
+```{r echo=TRUE}
+# mintából várható érték
+p_model<-sum((brexit_model$sample_leave*brexit_model$population))/sum(brexit_model$population)
+print(p_model)
+
+# mintából variancia
+var_model<-(p_model-p_model^2)/(N-1)*(sum(brexit$population-N)/sum(brexit$population))
+
+# mintából szórás
+sqrt(var_model)
+
+# valós eredmény
+# sajnos arra nem találtam adatokat, hogy a valóságban hányan mentek el szavazni
+# ezért a hivatalos számot használjuk
+print(0.5189)
+```
+
+## Többdimenziós populációból történő mintavétel
+### Független változók esetén
+
+Legyenek $\{X_1, X_2 \dots X_n \} \in X$ **változók** (tehát nem megfigyelések) **X** populációban, és legyen továbbá legyen $\Sigma=(X_{i,j})$ variancia-kovarianca mátrix $X$ változóiból. Amennyiben $X_{i,j}=0, \forall X_{i,j} \in \Sigma \text { és } i \neq j$ úgy a változók függetlenek. Az egyszerűség kedvéért tételezzük fel, hogy $X \sim {\sf Norm} {(\mu, \sigma^2)}$. Ekkor a mintavétel még több dimenzió mentén is konzisztens lesz, és populáció illetve a minta kovarianca mátrixának struktúrája is torzítatlan lesz: $\Sigma=\hat{\Sigma}$.
+A torzítatlanságok a Box-M statisztikával ellenőrizhetjük (H0: a kovariancia mátrixok egyenlők).
+
+#### Példa
+```{r véletlen mátrix létrehozása, echo=TRUE}
+x<-matrix(rnorm(4000,0,1), ncol=4) # hozzunk létre egy véletlen mátrixot
+x[,4]<-0 # alakítsuk át az utolsó oszlopot a minta vektorának
+x[1:100,4]<-1 # mivel véletlen a mátrixunk vehetjük az első 100 elemet nyugodtan mintának
+box<-boxM(x[,1:3], as.factor(x[,4])) # végezzük el a Box-M próbát (a minta NE legyen az input mátrixban)
+summary(box)
+```
+
+### Összefüggő változók esetén
+A fenti példa a gyakorlatban nagyon ritkán teljesül, mivel az egy tárgykörből származó egyedek attribútumai a legtöbbször összefüggnek. Például a különböző krónikus betegségek valószínűsége korral emelkedik, de egyéb, kortól független, paraméterek is meghatározók lehetnek (pl.: testsúly, hajlam stb.). Ebben az esetben is célunk, hogy a mintánk lehető legjobban hasonlítson a populációra. A helyzetet nehezíti, ha a változók különböző eloszlásból származnak, különösen, ha az eloszláscsalád is más.
+
+Tekintsünk egy kétváltozós esetet: Legyen **X** és **Y** két nem független változó, azaz $Cov(X,Y) \neq 0$. Tegyük fel, hogy ismert az $f_{XY}(x,y)$ együttes eloszlás. Ekkor lehetséges az $f_{X|Y}(x|y)$ és az $f_{Y|X}(y|x)$ feltételes eloszlásokból mintát venni. Legyen $(X_0,Y_0), \dots ,(X_n,Y_n)$ rendezett párokból álló sor. Ekkor alkalmazható az úgynevezett **Gibbs-mintavétel**, amelyben $(X_n,Y_n)$ a következő: $$X_{n+1} \sim f_{X|Y}(x|Y_n)$$ és $$Y_{n+1} \sim f_{Y|X}(y|X_{n+1})$$.
+
+#### Szemléltető példa
+<div class="alert alert-info">
+  <strong>Megjegyzés:</strong>
+a témakör a Bayes-i statisztika része, későbbi előadáson részletesebben tárgyaljuk majd.
+</div>
+
+Szükségünk van a populáció feltételes eloszlására. Az egyszerűség kedvéért most a kétváltozós esetet tekintjük át.
+
+Legyen egy betegség, ami a fiatalokat kisebb valószínűséggel támadja meg, mint az időseket.
+
+```{r valószínűségi táblázat, echo=TRUE}
+z<-matrix(c(0.5, 0.1, 0.15, 0.25), ncol=2, nrow=2, byrow = TRUE)
+rownames(z)<-c("Fiatal", "Idős")
+colnames(z)<-c("Egészséges", "Beteg")
+kable(z)
+```
+
+```{r Chi-sq test, echo=TRUE}
+# a biztonság kedvéért ellenőrizzük, hogy tényleg van asszociáció a változók között
+# H0: a változók köszött nincs asszociáció
+chisq.test(z*100) # a természetes számoknak kell lenniük
+```
+
+Készítsük el a táblázathoz tartozó "populációnkat".
+
+```{r populáció generálása}
+x<-cbind(c(rep("fiatal", 600), rep("idős",400)), c(rep("egészséges", 500), rep("beteg", 100), rep("egészséges", 150), rep("beteg", 250))) %>% as.data.frame()
+colnames(x)<-c("kor", "állapot")
+
+# keverjük össze az adatokat
+x$rnd<-rnorm(1000)
+x<-x[order(x$rnd),]
+x$rnd<-NULL
+```
+
+```{r véletlen minták, echo=TRUE}
+# nézzük meg annak a feltételes valószínűségét, hogy egy idős ember beteg
+# P(beteg|idős)=P(AB)/P(B)=0.25/0.4=0.625
+
+srs_cond_x<-c()
+for (i in 1:100) {
+  temp<-prop.table(table(x[round(runif(100, 1, 1000)),]))
+  srs_cond_x[i]<-temp[2,1]/sum(temp[2,])
+  rm(temp)
+}
+hist(srs_cond_x)
+```
+
+```{r szemiszisztematikus bolyongás, echo=TRUE}
+rnd_walk<-c()
+for (i in 1:100) {
+  x$rnd<-rnorm(1000)
+  x<-x[order(x$rnd),]
+  x$rnd<-NULL
+  temp<-prop.table(table(x[seq(1, 1000, 10),]))
+  rnd_walk[i]<-temp[2,1]/sum(temp[2,])
+  rm(temp)
+}
+hist(rnd_walk)
+```
+
+```{r sűrűség ábrák, echo=TRUE}
+melt(cbind(rnd_walk, srs_cond_x)) %>%
+  ggplot(aes(x=value, group=Var2, fill=Var2)) + geom_density(adjust=1.5, alpha=0.4)
+```
+
+## Konfidencia intervallumok
+Legyen egy populáció $\mu$ várható értékének $I$ konfidencia intervalluma, továbbá $\alpha$ tetszőlegesen kicsi megengedhető hiba. Ekkor $$P(\hat{\mu} \in I)=1-\alpha$$.
+
+Ha $\hat{\mu}$ torzítatlan becslése $\mu$-nek, akkor $\hat{\mu} \sim {\sf Norm(\mu, s^2)}$. Ekkor $\hat{\mu}$ mintaátlag konfidencia intervalluma: $$\hat{\mu} \pm t \sqrt{(\frac {N-n} {N}) \frac {s^2} {n}}$$
+ahol,
+*t*= *n-1* szabadságfokú Student-féle t-eloszlás $\frac {\alpha} {2}$ pontja.
+
+#### Példa
+```{r átlag konfidencia intervalluma, warning=FALSE}
+# Vegyünk mintát, és adjunk becslést arra, hogy átlagosan hányan élnek egy magyar településen
+telep_srs<-telep[round(runif(100, min = 1, max=nrow(telep))),]
+CI(telep_srs$Lakosság, ci=0.99)
+mean(telep$Lakosság)
+```
+
+## A minta méretének meghatározás
+<div class="alert alert-info">
+  <strong>Fontos!</strong>
+Nincs ideális mintaméret. A *n* elemszámú mintánál az *n+1* elemszámú minta mindig jobb becslést ad!
+</div>
+
+Legyen egy populáció valamilyen statisztikája $\Theta$, amit $\hat{\Theta}$ esztimátorral kívánunk megbecsülni, úgy hogy a lehető legközelebb legyünk a valódi értékhez. Más szavakkal $|\hat{\Theta}-\Theta|$ értéket szeretnénk minimalizálni. Mivel $\Theta$ valós értéke nem ismert, így csupán becslést tudunk arra adni, hogy vajon mennyire vagyunk hozzá közel. Legyen $\alpha$ egy előre rögzített valósznínűség, és legyen a következő valószínűség: $$P(|\hat{\Theta}-\Theta|)>d)<\alpha$$
+Célunk tehát *d* és $\alpha$ minimalizálása, vagyis a lehető legnagyobb $(1-\alpha)$ biztonság mellett a legkisebb *d* hibával becsülni $\Theta$ értékét.
+
+Ha $\hat{\Theta}$ torzítatlan, normális eloszlású becslése $\Theta$-nak, akkor $\frac {\hat{\Theta}-\Theta} {\sqrt{var(\hat{\Theta})}} \sim \sf Norm(0,1)$. Legyen *z* a standard normális eloszlás sűrűségfüggvényének $\frac {\alpha} {2}$ pontja. Ekkor $$P(\frac {\hat{\Theta}-\Theta} {\sqrt{var(\hat{\Theta})}})>z=P(|\hat{\Theta}-\Theta|)>z \sqrt{var(\hat{\Theta}})=\alpha$$. $\hat {\Theta}$ varianciája *n* mintanagyság növekedésével biztosan csökken, tehát az egyenlőség biztosan teljesül, ha megfelelően nagy mintanagyságot választottunk.
+
+### Mintanagyság meghatározása várható érték becslésére
+Amennyiben megfelelő a mintanagyság, úgy a következő egyenlet teljesül: $$z \sqrt { \frac {N-n} {N} \frac {\sigma^2} {n}} =d$$
+
+Ezt *n*-re rendezve kapjuk, hogy $$n= \frac {1} {\frac {d^2} {z^2\sigma^2} + \frac {1} {N}}$$
+
+Vegyük észre, hogy a mintanagyság szinte teljesen független a populáció (*N*) méretétől.
+
+#### Példa
+Legyen egy 1000 fős kórházi populáció, mintavétellel adjunk becslést arra, hogy hány nap egy betegség lappangási ideje. Mekkora mintát szükséges venni, hogy $\pm1$ napos hiba mellett 95%-os konfidencia intervallumban jó becslést tudjunk adni? 
+
+```{r Mintanagyság meghatározása átlag}
+N<-1000 # populáció nagysága
+d<-1 # 1 nap (hiperparaméter)
+alpha<-0.05 # 95%-os CI
+z<-qnorm(1-alpha/2) # z-érték
+sig<-2 # nap szórás (hiperparaméter)
+
+n<-1/((d^2/(z^2*sig^2)+(1/N)))
+n
+```
+
+```{r Mintavétel példa}
+x<-abs(rnorm(1000, 5, 2))
+sample(x, size=ceiling(n)) %>% CI
+mean(x)
+```
+
+## Mintanagyság meghatározása populáció méretének becslésére
+
+Hasonlóan járunk el, mint korábban az átlag esetén. $$z \sqrt{N(N-n) \frac {\sigma^2} {n}}=d$$
+
+*n*-re rendezve: $$n=\frac {1} {\frac {d^2} {N^2z^2\sigma^2} +N^{-1}}$$
+
+Látható, hogy **N** ismerete szükséges, holott pont ezt keressük. Ezért a *N* nem azt a populációt takarja, amit meg kívánunk mérni, hanem egy másik megfigyelési egységet, amely mentén a populáció valamilyen eloszlás szerint elhelyezkedik. Ennek megfelelően *n* a kiválasztott egységek száma. Ezért különösen fontos, hogy olyan megfigyelési egységet válasszuk, esetleg hozzunk létre magunk, amiről tudjuk, hogy mekkora.
+
+#### Példa
+Hány magyar településen szükséges megmérni a betegek számát, ahhoz hogy becslést tudjunk adni az országos betegszámra? Használjunk 5000 fős abszolút hibát és 95%-os confidencia intervallumot
+
+```{r Mintanagyság meghatározása total}
+N<-nrow(telep)
+d<-5000
+alpha<-0.05 # 95%-os CI
+z<-qnorm(1-alpha/2) # z-érték
+sig<-sd(telep$Beteg)
+
+n<-1/(d^2/(N^2*z^2*sig^2)+1/N)
+n
+```
+
+Látható, hogy nagyon magas a szükséges minta elemszáma, próbáljunk meg valahogy csökkenteni.
+
+```{r}
+N<-nrow(telep)
+d<-500000
+alpha<-0.05 # 95%-os CI
+z<-qnorm(1-alpha/2) # z-érték
+sig<-sd(telep$Beteg)
+
+n<-1/(d^2/(N^2*z^2*sig^2)+1/N)
+n
+```
+
+Végezzük el a mintavételt és a becslést!
+
+```{r}
+x<-sample(telep$Beteg, size=ceiling(n))
+mean(x)*N
+sum(telep$Beteg)
+```
+
+### Mintanagyság meghatározása populációbeli arány becslésére
+A fenti *populáció méretére* vonatkozó becslés nem igazán ideális, hiszen sokszor nem maga a konkrét szám érdekel minket, hanem "csupán" az arány a populáción belül. Az erre vonatkozó mintanagyság becslése a következő: $$n= \frac {Np(1-p)} {(N-1)(\frac {d^2} {z^2}) + p(1-p))}$$
+
+#### Példa
+Mekkora mintát kell venni a felnőtt 8 millió fős magyar lakosságból, hogy $\pm 5$ százalékos hibahatár mellett 95%-os biztonsággal becslést tudjunk adni egy betegség prevelanciájára?
+
+```{r Mintavétel arány}
+N<-8000000 # felnőtt lakosság száma
+p<-0.01 # feltételezett arány
+d<-0.005 # 5%-os hiba
+alpha<-0.05
+z<-qnorm(1-alpha/2) # z-érték
+
+(N*p*(1-p))/((N-1)*(d^2/z^2)+p*(1-p))
+```
+
+## Mintavétel során elkövethető hibák
+Egy populáció bármely paraméterének becslésekor mindig fennáll a hiba elkövetésének kockázata. Ez a kockázat akkor is fennáll, ha a teljes populáción végezzük el a vizsgálatot. A hibákat két csoportba sorolhatjuk:
+
+1. Első fajú hiba ($\alpha$): a null-hipotézist elutasítjuk, miközben igaz, azaz $P(H_0 \text { elutasít} | H_0 \text { igaz})=\alpha$
+2. Másodfajú hiba ($\beta$): a null-hipotézist nem utasítjuk el, miközben hamis, azaz $P(H_0 \text { elfogad}|H_0 \text { hamis})=\beta$
+
+Jellemzően $H_0$-t szoktuk a számunkra kedvező forgatókönyv számára kijelölni. Például ha $H_0$: a páciens nem fertőződött, úgy bizonyos esetekben még a legkisebb $\beta$ is túl nagy lehet.
+
+### Minta ereje
+Becsléskor hagyományosan az $1-\alpha$ szintet szoktuk maximalizálni, vagyis $P(H_0 \text { elutasít} | H_0 \text { igaz})=\alpha \Rightarrow min!$, pedig a minta erejét igazából az $1-\beta$ érték adja meg: $P(H_0 \text { elutasít}|H_0 \text { hamis})=1-\beta$. Ha a minta mérete konstans, akkor ha $\alpha$ értéke nő, $\beta$ értéke csökken, és ha $\alpha$ értéke csökken, $\beta$ értéke nő. $\alpha$ és $\beta$ értékének egyidejű csökkenése csak a **mintanagyság növelésével** érhető el. A mintanagyságot ekkor úgyis meghatározhatjuk, hogy $\beta$ minimalizálására törekszünk, a szokásos szintek 80%, 90%. A módszer hátránya, hogy legalább egy méréssel rendelkeznünk kell.
+
+### Minta erejének becslése átlag esetén
+Legyen $z= \frac {\mu-\mu_0} {\sigma / \sqrt{n}}$, ahol $\mu$ a becsült várható érték, $\mu_0$ pedig a feltételezett várható érték. Ekkora  minta erejének becslése: $$1-\beta=\Phi(z-z_{1-\alpha/2})+\Phi(-z-z_{1-\alpha/2})$$
+
+ahol $\Phi$ a *sztenderd normális eloszlás sűrűségfüggvénye*.
+
+A mintanagyság a következképpen becsülhető: $$n= (\sigma \frac {z_{1-\alpha/2}+z_{1-\beta}} {\mu-\mu_0})^2$$
+
+#### Példa
+Egy gyár azt állítja, hogy az izzóik átlagosan 1000 órát működnek. Mi 5 izzót vásároltunk, és azt tapasztatuk, hogy átlagosan 900 óra $\pm 100$ óra után tönkremennek. Mekkora a mintánk ereje, ha az első fajú hiba valószínűségét 5%-on rögzítjük?
+
+```{r a mintánk ereje}
+n<-5
+mu<-1000
+mu_0<-900
+sig=100
+alpha<-0.05
+z<-(mu-mu_0)/sig*sqrt(n)
+
+Power=pnorm(z-qnorm(1-alpha/2))+pnorm(-z-qnorm(1-alpha/2))
+Power
+```
+
+Mekkora mintát kellene vennünk ahhoz, hogy a minta erejét 90%-ra emeljük?
+
+```{r mintanagyság 90% erő mellett1}
+beta<-0.1 # Power=1-beta=0.9
+n=(sig*(qnorm(1-alpha/2)+qnorm(1-beta))/(mu-mu_0))^2
+n
+```
+
+### A minta ereje aránybecslés esetén
+Legyen $$z=\frac {p-p_0} {\sqrt{\frac {p(1-p)} {n}}}$$
+
+A minta erejéne kiszámolása hasonló módon történik, mint az átlag esetén. Az erőhöz rögzített mintanagyság a következő: $$n=p(1-p) (\frac {z_{1-\alpha/2} + z_{1-\beta}} {p-p_0})^2$$
+
+#### Példa
+Egy betegséggel való megfertőződés országos esélye 1%. Véletlenszerűen kiválasztunk 100 embert, és leteszteljük őket, és azt tapasztaljuk, hogy az átfertőződés csak 0,5%-os. Ellenőrizzük mintánk erejét, 5%-on rögzítve az első fajú hiba elkövetésének esélyét.
+
+```{r minta ereje aránybecslésnél}
+p=0.1
+p_0=0.05
+n=100
+alpha<-0.05
+z=(p-p_0)/sqrt(p*(1-p)/n)
+Power=pnorm(z-qnorm(1-alpha/2))+pnorm(-z-qnorm(1-alpha/2))
+Power
+```
+
+Mekkora mintát szükséges akkor vennünk, ha a minta erejét 90%-ra szeretnénk növelni?
+
+```{r mintanagyság 90% erő mellett2}
+p=0.1
+p_0=0.05
+alpha<-0.05
+beta=0.1 # Power=1-beta=0.9
+z=(p-p_0)/sqrt(p*(1-p)/n)
+n=p*(1-p)*((qnorm(1-alpha/2)+qnorm(1-beta))/(p-p_0))^2
+n
+```
+
+# Geográfiai mintavétel (kríging)
+
+Előfordulhat, hogy olyan mintavételt kell végeznünk ahol a területi dimenziónak kiemelt szerepe van. Tipikusan olyan esetekről van szó, ahol az egyik területi egységből nyert mintából következtetni lehet egy másik területi egységre, ahonnan azonban nem tudunk mintát venni. Ezek a területi egységek ráadásul szabálytalanul helyezkednek el egymáshoz képest.
+
+Ezek a mintavételi eljárások elsősorban a geológiai kutatások során terjedtek el. Például egy vállalat kíváncsi arra, hogy egy potenciális lelőhelyen mekkora az ásványkincs készlet. Ismert, hogy az ásványkincsek föld alatti elhelyezkedése se mélységében, se kiterjedésében nem egyenletes, ami jelentősen megnehezíti a kutatást, arról nem is beszélve, hogy a mintavétel költséges.
+
+Az eljárás gondolatmenete a következő: Legyenek $y_1, \dots, y_n$ mérések $t_1, \dots, t_n$ helyeken. Legyen $y_0$ pedig egy ismeretlen mennyiség, amit becsülni szeretnénk egy új $t_0$ helyen, vagy a teljes *T* területen, mint összes elérhető mennyiség (készlet). Miután $y_0$ sokkal inkább egy véletlen változó, mintsem a sokaság egy paramétere, ezért ez elsősorban nem egy becslése, hanem sokkal inkább egy predikciós probléma, amit térben kell elvégezni, és nem időben.
+
+Azért speciális ez a téma, mert a mért $y_n$ értékek, amelyek egymáshoz közel eső *t* helyeken vannak, tipikusan nem független egymástól. Mindezt a kovarianciafüggvény írja le:
+
+$$
+cov(Y_{t_1},Y_{t_2})=E[y_{{t_1}i}-E(Y_{t_1})][y_{{t_2}i}-E(Y_{t_2})]
+$$
+Ha a kovariancia csupán két mintavételi hely egymás közötti távolságától függ, nem pedig a területen elfoglalt konkrét helyüktől, akkor a kapcsolat e két hely között leírható $c(h)$ *kovariancia függvénnyel*, ahol *h* a két hely közötti távolságot jelenti, azaz
+
+$$
+c(h)=cov(y_{t+h}, y_t)
+$$
+
+Legyen egy két dimenzióval leírható terület. Ekkor, $t=(t_1, t_2)$ megadja a terület koordinátáit. A két hely közötti *h* elmozdulás (*displacement*) vektorértékű, vagyis a kovarianciafüggvény értéke nem csak a két hely közötti távolságtól, hanem az elmozdulás irányától is függ. Az elmozdulás (*displacement*) és a távolság (*distance*) közötti különbség rendkívül fontos ezen a területen.
+
+**Távolság**: Mekkora utat teszünk meg mozgásban A és B pont között? **Skalár** mennyiség.
+**Elmozdulás**: Mekkora utat teszünk egy adott irányban? **Vektor** mennyiség.
+
+<center>
+![Forrás: https://media.geeksforgeeks.org/wp-content/uploads/20220905114456/WhatisDisplacement.jpg](https://media.geeksforgeeks.org/wp-content/uploads/20220905114456/WhatisDisplacement.jpg)
+<\center>
+
+Ha a várható érték minden helyen azonos, és a kovariancia függvény értéke csak az elmozdulástól függ, akkor *másodfokú stacionaritásról* beszélünk. Ha a kovariancia függvény csak *d* távolságtól függ két hely között, de nem függ az elmozdulás irányától, a folyamat *izotróp* és a kovariancia függvényt $c(d)$-vel jelöljük.
+
+Tegyük fel, hogy *n* helyről van mintánk, és ezek alapján meg kívánjuk határozni, hogy mekkora mennyiség található egy tetszőlegesen kiválasztott helyen. Legyen $y_i$ a mért mennyiség $i=1, \dots, n$ helyeken. Legyen továbbá $c_{ij}=cov(y_i, y_j)$, azaz a kovariancia *i* és *j* lelőhelyek között. Ne felejtsük el, hogy $c_{ii}=var(y_i)$. Keressük $y_0$ értékét $t_0$ helyeken $y_i$ minta alapján, azaz keressük $E(\hat{y}_0)=E(y_0)$ torzítatlan becslést, ami minimalizálja $E(y_0-\hat{y}_0)^2$ négyzetes hibát.
+
+Általánosságban a legjobb esztimátor egy feltételes várható érték számítás, azonban $E(y_0 | y_1, \dots, y_n)$ az *y* értékek együttes eloszlásától függ, aminek becslése rendkívül nehéz. A gyakorlatban egy regressziós eljárás segítségével becslünk, ami az ismert formát ölti:
+$$
+\hat{y}_0=\sum_{i=1}^na_iy_i
+$$
+és keressük azok az $a_1, \dots, a_n$ értékeket, amelyek minimalizálják a négyzetes hibát, és torzítatlan becslést adnak. A probléma megoldását egy Lagrange-multiplikátor alapú eljárás adja:
+
+$$
+\mathbf{f=G^{-1}h}
+$$
+
+ahol,
+
+$$
+\mathbf{f=}
+\begin{bmatrix}
+a_1 \\
+a_2 \\
+\vdots \\
+a_n \\
+m
+\end{bmatrix}
+
+,\mathbf{h=}
+\begin{bmatrix}
+c_{10} \\
+c_{20} \\
+\vdots \\
+c_{n0} \\
+1
+\end{bmatrix}
+$$
+
+$$
+\mathbf{G=}
+\begin{bmatrix}
+c_{11} & c_{12} & \cdots & c_{1n} & 1 \\
+c_{21} & c_{22} & \cdots & c_{2n} & 1 \\
+\vdots & \vdots & \ddots & \vdots & \vdots \\
+c_{n1} & c_{n2} & \cdots & c_{nn} & 1 \\
+1 & 1 & \cdots & 1 & 0
+\end{bmatrix}
+$$
+
+ahol, az *m* konstans a Lagrange multiplikátor, amit a predikciós négyzetes hiba kiszámításához fogunk felhasználni. A legjobb $\hat{y}_0$ prediktor elnevezése **kriging prediktor**, amely a geostatisztikából származik. $\hat{y}_0$ varianciája (kriging variancia) a következő:
+$$
+E(y_0-\hat{y}_0)^2=c_{00}-\sum_{i=1}^na_1c_{0i}-m
+$$
+
+A becslés jósága a kovarianciamátrix ismeretén múlik, amit jellemzően szintén mintából becslünk, vagy korábbi kutatásokból veszünk át. Stacionárius és izotropikus folyamatok esetén a kovariancia a mintából az alábbi módon becsülhető $n_d$ párra, amelyek megközelítőleg *d* távolságra vannak egymástól:
+$$
+\hat{c}(d)=n_d^{-1} \sum (y_{ti}-\overline{y})^2
+$$
+
+Amennyiben szükséges, úgy a kovariancia a távolság függvényében ábrázolható, arra simító függvény illeszthető, akár extrapolálható is.
+
+## Variogram
+Geológiai kutatások esetében a területi varianciát *variogram* segítségével szokás összefoglalóan megjeleníteni. A variogram különböző helyeken mért mérések különbségének varianciája:
+
+$$
+var(y_{t+h}-y_t)=2\gamma (h)
+$$
+
+ahol $\gamma(h)$ az úgynevezett szemivariogram. Ha a folyamat másodfokú stacionárius (a várható érték minden helyen azonos, és a kovariancia függvény értéke csak az elmozdulástól függ), akkor a kovariancia függvény és a variogram azonos információt hordoz.
+
+## Példa
+```{r}
+library(sp)
+library(gstat)
+library(dplyr)
+library(ggplot2)
+
+# Töltsük be az adatokat
+data("meuse")
+# Hollandiában a Meuse folyó területén mért vegyi elemek gyakoriságát tartalmazó adatbázis
+
+# Cink koncentráció különböző x és y koordináták mentén
+meuse %>% as.data.frame %>% 
+  ggplot(aes(x, y)) + geom_point(aes(size=zinc), color="blue", alpha=3/4) + 
+  ggtitle("Cink koncentráció (ppm)") + coord_equal() + theme_bw()
+
+# a geológiai objektum létehozásához meg kell adni a koordináták oszlopát
+coordinates(meuse) <- ~ x + y
+
+lzn.vgm <- variogram(log(zinc)~1, meuse) # számoljuk ki a minta varianciát 
+lzn.fit <- fit.variogram(lzn.vgm, model=vgm(1, "Sph", 900, 1)) # modell illesztése, a vgm függvényben a simítási paramétereket adjuk meg
+
+plot(lzn.vgm, lzn.fit) # simított területi variancia függvény
+
+data("meuse.grid") # rácspontokra illesztett adatok betöltése
+coordinates(meuse.grid) <- ~ x + y 
+lzn.kriged <- krige(log(zinc) ~ 1, meuse, meuse.grid, model=lzn.fit) # kriging a korábban számolt területi variancia segítségével
+
+lzn.kriged %>% as.data.frame %>%
+  ggplot(aes(x=x, y=y)) + geom_tile(aes(fill=var1.pred)) + coord_equal() +
+  scale_fill_gradient(low = "yellow", high="red") +
+  theme_bw() + ggtitle("Cink koncentráció (ppm)")
+```
+
+
+
+
+
+
+
+
+
+| A következő rész már nem képezi a tananyag részét, az érdeklődő hallgatók számára azonban továbbra is elérhető |
+| --- |
+
+## Minta súlyozása
+![](http://images.clipartpanda.com/weight-clipart-canstock22231815.jpg)
+
+Néhány esetben előfordulhat, hogy a mintát súlyozással igazítjuk a populáció paramétereihez, ha egy-egy szubpopuláció alul vagy felül van reprezentálva a mintában. Nincs szabály arra, hogy mekkora eltérést szabad súlyozással javítani, azonban ha nagy eltérések vannak, akkor inkább a minta méretét szükséges növelni. A minta súlya 3 elemből épül fel:
+
+$$w_{final,i}=w_{sel,i} \times w_{nr,i} \times w_{ps,i}$$
+
+ahol,
+$w_{sel}$=kiválasztási súly, *SRS* esetén $1/n$.
+$w_{nr}$=válaszmegtagadási kiigazító faktorsúly, $rrate^{-1}$, ahol *rrate* a válaszadási hajlandóság az adott osztályban.
+$w_{ps}$=poszt-sztratifikációs korrekciós faktorsúly, $\frac {w_{sel,i} \times w_{nr} \times n} {N_l}$, ahol $N_l$ a populáció egyedszáma *l* osztályban.
+
+#### Példa
+Legyen egy 500 fős iskola, ahol a tanulók 60%-a lány, 40%-a fiú. Az iskolába 10 éves kortól 18 éves korig járnak. A különböző évfolyamokban más a létszám. Adjunk becslést arra, hogy 20 fős minta esetén milyen a tanulók átlaga. Tegyük komplexebbé a populációt azza, hogy a lányok átlagosan jobb osztályzatokat kapnak matematikából, mint a fiúk, fizikából viszont fordított a helyzet, összességében azonban a lányok tanulmányi átlaga jobb. Tegyük fel, hogy a gyerek csak akkor vonható be a mintába, ha a szülő beleegyezett (50% beleegyezett).
+
+```{r, warning=FALSE}
+# hozzuk létre az adatbázist
+school<-matrix(nrow=500, ncol=6) %>% as.data.frame
+colnames(school)<-c("gender", "class", "math", "physics", "total", "parent")
+
+#hozzuk létre a nemeket 3:2 arányban
+school$gender[1:300]<-"girl"
+school$gender[301:500]<-"boy"
+
+# keverjük össze az populációt
+school$rnd<-rnorm(500)
+school<-school[order(school$rnd),]
+school$rnd<-NULL
+
+# hozzuk létre az osztályokat
+school$class<-round(runif(500, min=1, max=8))
+
+# hozzuk létre a matekátlagokat
+for (i in 1:500) {
+  if (school$gender[i]=="girl") {
+    mark<-rnorm(1, 4, 1)
+    while (mark<1 | mark>5) {
+      mark<-rnorm(1, 4, 1)
+    }
+    school$math[i]<-mark
+  }
+  mark<-rnorm(1, 3.5, 1)
+  while (mark<1 | mark>5) {
+    mark<-rnorm(1, 3.5, 1)
+  }
+  school$math[i]<-mark
+}
+
+# hozzuk létre a fizika átlagot
+for (i in 1:500) {
+  if (school$gender[i]=="girl") {
+    mark<-rnorm(1, 3, 1)
+    while (mark<1 | mark>5) {
+      mark<-rnorm(1, 3, 1)
+    }
+    school$physics[i]<-mark
+  }
+  mark<-rnorm(1, 3.5, 1)
+  while (mark<1 | mark>5) {
+    mark<-rnorm(1, 3.5, 1)
+  }
+  school$physics[i]<-mark
+}
+
+# hozzuk létre az összes tárgyra vonatkozó tanulmányi átlagot
+for (i in 1:500) {
+  if (school$gender[i]=="girl") {
+    mark<-rnorm(1, 4.2, 1)
+    while (mark<1 | mark>5) {
+      mark<-rnorm(1, 4.2, 1)
+    }
+    school$total[i]<-mark
+  }
+  mark<-rnorm(1, 3.9, 1)
+  while (mark<1 | mark>5) {
+    mark<-rnorm(1, 3.9, 1)
+  }
+  school$total[i]<-mark
+}
+
+# adjuk meg a szülői hozzájárulás vektorát
+school$parent<-rbinom(500, 1, 0.5)
+```
+
+Vegyünk először 20 elemű, súlyozatlan mintát.
+
+```{r súlyozatlan minta}
+school_srs_raw<-school[round(runif(20, 1, 500)),]
+
+# szűrjük le a mintát azokra, akiknek a szülei hozzájárultak a vizsgálathoz
+school_srs<-subset(school_srs_raw, parent==1)
+
+# számoljuk ki az átlagokat tárgyanként
+school_srs %>% dplyr::summarise(math=mean(math), physics=mean(physics), total=mean(total))
+```
+
+Súlyozzuk be a mintát, most tekintsünk el a poszt-sztrafifikációs súlyozástól
+
+```{r súlyozás}
+school_srs$weight_select<-0 # hozzuk létre a súlyvektort a kiválasztási súlynak
+
+# A lányok a populáció 60%-át, a fiúk a 40%-át teszik ki, súlyozzunk eszerint
+school_srs$weight_select[school_srs$gender=="girl"]<-0.6/length(which(school_srs$gender=="girl"))
+school_srs$weight_select[school_srs$gender=="boy"]<-0.4/length(which(school_srs$gender=="boy"))
+
+# válaszmegtagadási súlyozás
+rrates<-prop.table(table(school_srs_raw$gender, school_srs_raw$parent))
+rrates_boy<-rrates[1,2]/sum(rrates[1,])
+rrates_girls<-rrates[2,2]/sum(rrates[2,])
+school_srs$weight_nonresp<-0
+school_srs$weight_nonresp[school_srs$gender=="girl"]<-rrates_girls
+school_srs$weight_nonresp[school_srs$gender=="boy"]<-rrates_boy
+
+# teljes súly
+school_srs$weight<-school_srs$weight_select*school_srs$weight_nonresp
+
+# számoljuk ki a súlyozott átlagokat tárgyanként
+school_srs %>%
+  dplyr::summarise(math=weighted.mean(math, weight), physics=weighted.mean(physics, weight), total=weighted.mean(total, weight))
+```
+
+
+Hasonlítsuk össze az eredetivel
+
+```{r valós adatok}
+school %>%
+  dplyr::summarise(math=mean(math), physics=mean(physics), total=mean(total))
+```
+
+Rétegenkénti utósúlyozás
+
+```{r utósúlyozás}
+sample_class<-table(school_srs$class)
+real_class<-table(school$class)
+
+school_srs$weight_post<-0
+for (i in 1:8) {
+  school_srs$weight_post[school_srs$class==i]<-(school_srs$weight_select[school_srs$class==i]*school_srs$weight_nonresp[school_srs$class==i]*sample_class[which(names(sample_class)==i)])/real_class[i]
+}
+
+school_srs$weight<-school_srs$weight_select*school_srs$weight_nonresp*school_srs$weight_post
+
+# számoljuk ki a súlyozott átlagokat tárgyanként
+school_srs %>%
+  dplyr::summarise(math=weighted.mean(math, weight), physics=weighted.mean(physics, weight), total=weighted.mean(total, weight))
+```
+
+![](https://cdn.xl.thumbs.canstockphoto.com/canstock16776767.jpg)
